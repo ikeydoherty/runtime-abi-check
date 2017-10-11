@@ -34,7 +34,7 @@ func mainRoutine(paths []string) error {
 }
 
 func main() {
-	if err := mainRoutine([]string{"/usr/bin/nano"}); err != nil {
+	if err := mainRoutine([]string{"/usr/bin/gedit"}); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot recover from error: %v\n", err)
 		os.Exit(1)
 	}
