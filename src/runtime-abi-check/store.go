@@ -121,6 +121,19 @@ func (s *SymbolStore) ScanPath(path string) error {
 	return nil
 }
 
+// hasLibrary works out if we've seen this library for the given architecture
+// already to prevent loading it again.
+func (s *SymbolStore) hasLibrary(name string, m elf.Machine) bool {
+	mp, ok := s.symbols[m]
+	if !ok {
+		return false
+	}
+	if _, ok := mp[name]; ok {
+		return true
+	}
+	return false
+}
+
 // scanELF is the internal recursion function to map out a symbol space completely
 func (s *SymbolStore) scanELF(path string, file *elf.File) error {
 	name := filepath.Base(path)
@@ -154,6 +167,10 @@ func (s *SymbolStore) scanELF(path string, file *elf.File) error {
 
 	// At this point, we'd load all relevant libs
 	for _, l := range libs {
+		if s.hasLibrary(l, file.FileHeader.Machine) {
+			fmt.Fprintf(os.Stderr, "Already loaded: %v\n", l)
+			continue
+		}
 		// Try and find the relevant guy. Basically, its an ELF and machine is matched
 		lib, libPath, err := s.locateLibrary(l, file)
 		if err != nil {
