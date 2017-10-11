@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // SymbolStore is used to create a global mapping so that we can resolve symbols
@@ -134,6 +135,30 @@ func (s *SymbolStore) hasLibrary(name string, m elf.Machine) bool {
 	return false
 }
 
+// storeSymbol will filter symbols that we don't actually care about for linking,
+// i.e. weak symbols
+//
+// This function is largely adapted from the analyzeLibrary function I wrote in
+// abireport while working at Intel:
+//
+// original Copyright © Intel Corporation
+// https://github.com/clearlinux/abireport/blob/master/src/libabi/analyze.go
+func (s *SymbolStore) storeSymbol(name string, file *elf.File, sym *elf.Symbol) {
+	nSections := elf.SectionIndex(len(file.Sections))
+	if elf.ST_TYPE(sym.Info) == elf.STT_LOOS || elf.ST_BIND(sym.Info)&elf.STB_WEAK == elf.STB_WEAK {
+		return
+	}
+	if sym.Section&elf.SHN_ABS != elf.SHN_ABS &&
+		sym.Section < nSections && file.Sections[sym.Section].Name == ".text" {
+		return
+	}
+	nom := strings.TrimSpace(sym.Name)
+	if nom == "" {
+		return
+	}
+	s.symbols[file.FileHeader.Machine][name][nom] = true
+}
+
 // scanELF is the internal recursion function to map out a symbol space completely
 func (s *SymbolStore) scanELF(path string, file *elf.File) error {
 	name := filepath.Base(path)
@@ -159,10 +184,10 @@ func (s *SymbolStore) scanELF(path string, file *elf.File) error {
 		s.symbols[file.FileHeader.Machine][name] = make(map[string]bool)
 	}
 
-	for _, sym := range providesSymbols {
+	for i := range providesSymbols {
 		// TODO: Filter symbols out if they're janky/weak
 		// Store hit table
-		s.symbols[file.FileHeader.Machine][name][sym.Name] = true
+		s.storeSymbol(name, file, &providesSymbols[i])
 	}
 
 	// At this point, we'd load all relevant libs
