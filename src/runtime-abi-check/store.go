@@ -53,7 +53,7 @@ func NewSymbolStore() *SymbolStore {
 
 // locateLibrary is a private method to determine where a library might actually
 // be found on the system
-func (s *SymbolStore) locateLibrary(library string, inputFile *elf.File) []string {
+func (s *SymbolStore) locateLibraryPaths(library string, inputFile *elf.File) []string {
 	var ret []string
 	var searchPath []string
 	// TODO: Be unstupid and accept DT_RUNPATH foo as well as faked LD_LIBRARY_PATH
@@ -76,6 +76,26 @@ func (s *SymbolStore) locateLibrary(library string, inputFile *elf.File) []strin
 	return ret
 }
 
+// locateLibrary will attempt to find the right architecture library.
+func (s *SymbolStore) locateLibrary(library string, inputFile *elf.File) (*elf.File, error) {
+	possibles := s.locateLibraryPaths(library, inputFile)
+
+	for _, p := range possibles {
+		test, err := elf.Open(p)
+		if err != nil {
+			continue
+		}
+		if test.FileHeader.Machine != inputFile.FileHeader.Machine {
+			fmt.Fprintf(os.Stderr, "Skipping incompatible library %s (%v)\n", p, test.FileHeader.Machine)
+			test.Close()
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "Found library @ %v\n", p)
+		return test, nil
+	}
+	return nil, fmt.Errorf("failed to locate: %v", library)
+}
+
 // ScanPath will attempt to scan an input file and work out symbol resolution
 func (s *SymbolStore) ScanPath(path string) error {
 	file, err := elf.Open(path)
@@ -83,6 +103,12 @@ func (s *SymbolStore) ScanPath(path string) error {
 		return err
 	}
 	defer file.Close()
+
+	return s.scanELF(file)
+}
+
+// scanELF is the internal recursion function to map out a symbol space completely
+func (s *SymbolStore) scanELF(file *elf.File) error {
 
 	// Figure out who we actually import
 	libs, err := file.ImportedLibraries()
@@ -92,8 +118,17 @@ func (s *SymbolStore) ScanPath(path string) error {
 
 	// At this point, we'd load all relevant libs
 	for _, l := range libs {
-		possibles := s.locateLibrary(l, file)
-		fmt.Println(possibles)
+		// Try and find the relevant guy. Basically, its an ELF and machine is matched
+		lib, err := s.locateLibrary(l, file)
+		if err != nil {
+			return err
+		}
+		// Recurse into this Thing
+		if err = s.scanELF(lib); err != nil {
+			lib.Close()
+			return err
+		}
+		lib.Close()
 	}
 
 	// Figure out what symbols we end up using
