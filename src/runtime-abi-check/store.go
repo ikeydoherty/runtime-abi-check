@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // SymbolStore is used to create a global mapping so that we can resolve symbols
@@ -133,22 +132,29 @@ func (s *SymbolStore) hasLibrary(name string, m elf.Machine) bool {
 // original Copyright © Intel Corporation
 // https://github.com/clearlinux/abireport/blob/master/src/libabi/analyze.go
 func (s *SymbolStore) storeSymbol(name string, file *elf.File, sym *elf.Symbol) {
-	nSections := elf.SectionIndex(len(file.Sections))
-	if elf.ST_TYPE(sym.Info) == elf.STT_LOOS || elf.ST_BIND(sym.Info)&elf.STB_WEAK == elf.STB_WEAK {
-		return
-	}
-	if sym.Section&elf.SHN_ABS != elf.SHN_ABS &&
-		sym.Section < nSections && file.Sections[sym.Section].Name == ".text" {
-		return
-	}
-	nom := strings.TrimSpace(sym.Name)
-	if nom == "" {
-		return
-	}
-	s.symbols[file.FileHeader.Machine][name][nom] = true
+	s.symbols[file.FileHeader.Machine][name][sym.Name] = true
 }
 
 func (s *SymbolStore) resolveSymbol(path string, file *elf.File, sym *elf.ImportedSymbol) bool {
+	bucket, ok := s.symbols[file.FileHeader.Machine]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "No provider found for machine: %v\n", file.FileHeader.Machine)
+		return false
+	}
+	// Easy when we have the library name..
+	if sym.Library != "" {
+		lib, ok := bucket[sym.Library]
+		// unknown library!
+		if !ok {
+			fmt.Fprintf(os.Stderr, "Unknown library '%s'\n", sym.Library)
+			return false
+		}
+		if _, ok := lib[sym.Name]; !ok {
+			fmt.Fprintf(os.Stderr, "Unknown symbol for library '%s': %s\n", sym.Library, sym.Name)
+			return false
+		}
+		return true
+	}
 	return false
 }
 
