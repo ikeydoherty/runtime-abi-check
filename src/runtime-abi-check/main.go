@@ -17,50 +17,25 @@
 package main
 
 import (
-	"debug/elf"
 	"fmt"
 	"os"
 )
 
-// Scan the path to determine all dependencies..
-func scanPath(path string) error {
-	file, err := elf.Open(path)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	// Figure out who we actually import
-	libs, err := file.ImportedLibraries()
-	if err != nil {
-		return err
-	}
-
-	// At this point, we'd load all relevant libs
-	fmt.Println(libs)
-
-	// Figure out what symbols we end up using
-	syms, err := file.ImportedSymbols()
-	if err != nil {
-		return err
-	}
-
-	// At this point, we'd resolve all symbols..
-	// The "Library" may actually be empty, so we need to go looking through
-	// a symbol store for this process to find out who actually owns it
-	for _, sym := range syms {
-		if sym.Library != "" {
-			continue
+// mainRoutine will handle setting up the store and scanning a set of paths
+// to begin resolution..
+func mainRoutine(paths []string) error {
+	store := NewSymbolStore()
+	for _, p := range paths {
+		if err := store.ScanPath(p); err != nil {
+			return err
 		}
-		fmt.Printf("Resolve symbol: %v\n", sym.Name)
 	}
-
 	return nil
 }
 
 func main() {
-	if err := scanPath("/usr/bin/nano"); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	if err := mainRoutine([]string{"/usr/bin/nano"}); err != nil {
+		fmt.Fprintf(os.Stderr, "Cannot recover from error: %v\n", err)
 		os.Exit(1)
 	}
 }
