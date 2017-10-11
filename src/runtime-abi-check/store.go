@@ -155,6 +155,13 @@ func (s *SymbolStore) resolveSymbol(path string, file *elf.File, sym *elf.Import
 		}
 		return true
 	}
+	// We don't know the provider, so we've gotta go find this sod.
+	for libName := range bucket {
+		if _, ok := bucket[libName][sym.Name]; ok {
+			fmt.Fprintf(os.Stderr, "Found symbol '%s' in '%s'\n", sym.Name, libName)
+			return true
+		}
+	}
 	return false
 }
 
