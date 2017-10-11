@@ -148,6 +148,10 @@ func (s *SymbolStore) storeSymbol(name string, file *elf.File, sym *elf.Symbol) 
 	s.symbols[file.FileHeader.Machine][name][nom] = true
 }
 
+func (s *SymbolStore) resolveSymbol(path string, file *elf.File, sym *elf.ImportedSymbol) bool {
+	return false
+}
+
 // scanELF is the internal recursion function to map out a symbol space completely
 func (s *SymbolStore) scanELF(path string, file *elf.File) error {
 	name := filepath.Base(path)
@@ -207,11 +211,11 @@ func (s *SymbolStore) scanELF(path string, file *elf.File) error {
 	// At this point, we'd resolve all symbols..
 	// The "Library" may actually be empty, so we need to go looking through
 	// a symbol store for this process to find out who actually owns it
-	for _, sym := range syms {
-		if sym.Library != "" {
-			continue
+	for i := range syms {
+		sym := &syms[i]
+		if !s.resolveSymbol(path, file, sym) {
+			return fmt.Errorf("failed to resolve symbol: %s", sym.Name)
 		}
-		fmt.Printf("Resolve symbol: %v\n", sym.Name)
 	}
 
 	return nil
