@@ -28,7 +28,7 @@ import (
 type SymbolStore struct {
 	// symbols map Machine -> library name -> symbol
 	// TODO: Consider making this full library path to symbol and resolve that way..
-	symbols map[elf.Machine]map[string]string
+	symbols map[elf.Machine]map[string]map[string]bool
 
 	// Where we're allowed to look for system libraries.
 	systemLibraries []string
@@ -37,7 +37,7 @@ type SymbolStore struct {
 // NewSymbolStore will return a newly setup symbol store..
 func NewSymbolStore() *SymbolStore {
 	ret := &SymbolStore{
-		symbols: make(map[elf.Machine]map[string]string),
+		symbols: make(map[elf.Machine]map[string]map[string]bool),
 		// Typical set of paths known by linux distributions
 		systemLibraries: []string{
 			"/usr/lib64",
@@ -77,7 +77,7 @@ func (s *SymbolStore) locateLibraryPaths(library string, inputFile *elf.File) []
 }
 
 // locateLibrary will attempt to find the right architecture library.
-func (s *SymbolStore) locateLibrary(library string, inputFile *elf.File) (*elf.File, error) {
+func (s *SymbolStore) locateLibrary(library string, inputFile *elf.File) (*elf.File, string, error) {
 	possibles := s.locateLibraryPaths(library, inputFile)
 
 	for _, p := range possibles {
@@ -91,9 +91,9 @@ func (s *SymbolStore) locateLibrary(library string, inputFile *elf.File) (*elf.F
 			continue
 		}
 		fmt.Fprintf(os.Stderr, "Found library @ %v\n", p)
-		return test, nil
+		return test, p, nil
 	}
-	return nil, fmt.Errorf("failed to locate: %v", library)
+	return nil, "", fmt.Errorf("failed to locate: %v", library)
 }
 
 // ScanPath will attempt to scan an input file and work out symbol resolution
@@ -103,12 +103,27 @@ func (s *SymbolStore) ScanPath(path string) error {
 		return err
 	}
 	defer file.Close()
+	err = s.scanELF(path, file)
+	if err != nil {
+		return err
+	}
 
-	return s.scanELF(file)
+	// Dump the symbol table
+	for m := range s.symbols {
+		fmt.Printf("Machine: %v\n\n", m)
+
+		for lib := range s.symbols[m] {
+			for sym := range s.symbols[m][lib] {
+				fmt.Printf("%s:%s\n", lib, sym)
+			}
+		}
+	}
+	return nil
 }
 
 // scanELF is the internal recursion function to map out a symbol space completely
-func (s *SymbolStore) scanELF(file *elf.File) error {
+func (s *SymbolStore) scanELF(path string, file *elf.File) error {
+	name := filepath.Base(path)
 
 	// Figure out who we actually import
 	libs, err := file.ImportedLibraries()
@@ -116,15 +131,36 @@ func (s *SymbolStore) scanELF(file *elf.File) error {
 		return err
 	}
 
+	// Make sure we've got a bucket for the Machine
+	if _, ok := s.symbols[file.FileHeader.Machine]; !ok {
+		s.symbols[file.FileHeader.Machine] = make(map[string]map[string]bool)
+	}
+
+	// Find out what we actually expose..
+	providesSymbols, err := file.DynamicSymbols()
+	if err != nil {
+		return err
+	}
+
+	if len(providesSymbols) > 0 {
+		s.symbols[file.FileHeader.Machine][name] = make(map[string]bool)
+	}
+
+	for _, sym := range providesSymbols {
+		// TODO: Filter symbols out if they're janky/weak
+		// Store hit table
+		s.symbols[file.FileHeader.Machine][name][sym.Name] = true
+	}
+
 	// At this point, we'd load all relevant libs
 	for _, l := range libs {
 		// Try and find the relevant guy. Basically, its an ELF and machine is matched
-		lib, err := s.locateLibrary(l, file)
+		lib, libPath, err := s.locateLibrary(l, file)
 		if err != nil {
 			return err
 		}
 		// Recurse into this Thing
-		if err = s.scanELF(lib); err != nil {
+		if err = s.scanELF(libPath, lib); err != nil {
 			lib.Close()
 			return err
 		}
