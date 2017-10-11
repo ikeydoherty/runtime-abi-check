@@ -108,17 +108,6 @@ func (s *SymbolStore) ScanPath(path string) error {
 	if err != nil {
 		return err
 	}
-
-	// Dump the symbol table
-	for m := range s.symbols {
-		fmt.Printf("Machine: %v\n\n", m)
-
-		for lib := range s.symbols[m] {
-			for sym := range s.symbols[m][lib] {
-				fmt.Printf("%s:%s\n", lib, sym)
-			}
-		}
-	}
 	return nil
 }
 
