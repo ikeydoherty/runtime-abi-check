@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // SymbolStore is used to create a global mapping so that we can resolve symbols
@@ -32,6 +33,9 @@ type SymbolStore struct {
 
 	// Where we're allowed to look for system libraries.
 	systemLibraries []string
+
+	// Potential replacement rpath $LIB dirs
+	rlibDirs []string
 }
 
 // NewSymbolStore will return a newly setup symbol store..
@@ -46,18 +50,65 @@ func NewSymbolStore() *SymbolStore {
 			"/usr/lib/i386-linux-gnu",
 			"/usr/lib32",
 		},
+		rlibDirs: []string{
+			"lib64",
+			"lib32",
+			"lib/x86_64-linux-gnu",
+			"lib/i386-linux-gnu",
+			"lib",
+		},
 	}
 
 	return ret
 }
 
+// rpathEscaped will perform $ORIGIN and $LIB escapes to ensure we expand all
+// possible searches.
+func (s *SymbolStore) rpathEscaped(rpath, basepath string) []string {
+	basedir := filepath.Dir(basepath)
+	if strings.Contains(rpath, "$ORIGIN") {
+		rpath = strings.Replace(rpath, "$ORIGIN", basedir, -1)
+	}
+
+	ret := []string{rpath}
+
+	if strings.Contains(rpath, "$LIB") {
+		for _, l := range s.rlibDirs {
+			ret = append(ret, strings.Replace(rpath, "$LIB", l, -1))
+		}
+	}
+	return ret
+}
+
 // locateLibrary is a private method to determine where a library might actually
 // be found on the system
-func (s *SymbolStore) locateLibraryPaths(library string, inputFile *elf.File) []string {
+func (s *SymbolStore) locateLibraryPaths(path string, library string, inputFile *elf.File) ([]string, error) {
 	var ret []string
 	var searchPath []string
+
+	// Does it got RPATH?
+	rpaths, err := inputFile.DynString(elf.DT_RPATH)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, rpath := range rpaths {
+		searchPath = append(searchPath, s.rpathEscaped(rpath, path)...)
+	}
+
 	// TODO: Be unstupid and accept DT_RUNPATH foo as well as faked LD_LIBRARY_PATH
 	searchPath = append(searchPath, s.systemLibraries...)
+
+	// Run path is always after system paths
+	runpaths, err := inputFile.DynString(elf.DT_RUNPATH)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, runpath := range runpaths {
+		searchPath = append(searchPath, s.rpathEscaped(runpath, path)...)
+	}
+
 	for _, p := range searchPath {
 		// Find out if the guy exists.
 		fullPath := filepath.Join(p, library)
@@ -73,12 +124,15 @@ func (s *SymbolStore) locateLibraryPaths(library string, inputFile *elf.File) []
 		ret = append(ret, fullPath)
 
 	}
-	return ret
+	return ret, nil
 }
 
 // locateLibrary will attempt to find the right architecture library.
-func (s *SymbolStore) locateLibrary(library string, inputFile *elf.File) (*elf.File, string, error) {
-	possibles := s.locateLibraryPaths(library, inputFile)
+func (s *SymbolStore) locateLibrary(path string, library string, inputFile *elf.File) (*elf.File, string, error) {
+	possibles, err := s.locateLibraryPaths(path, library, inputFile)
+	if err != nil {
+		return nil, "", err
+	}
 
 	for _, p := range possibles {
 		test, err := elf.Open(p)
@@ -203,7 +257,7 @@ func (s *SymbolStore) scanELF(path string, file *elf.File) error {
 			continue
 		}
 		// Try and find the relevant guy. Basically, its an ELF and machine is matched
-		lib, libPath, err := s.locateLibrary(l, file)
+		lib, libPath, err := s.locateLibrary(path, l, file)
 		if err != nil {
 			return err
 		}
