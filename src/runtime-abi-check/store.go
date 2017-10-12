@@ -179,13 +179,12 @@ func (s *SymbolStore) hasLibrary(name string, m elf.Machine) bool {
 
 // storeSymbol will filter symbols that we don't actually care about for linking,
 // i.e. weak symbols
-//
-// This function is largely adapted from the analyzeLibrary function I wrote in
-// abireport while working at Intel:
-//
-// original Copyright © Intel Corporation
-// https://github.com/clearlinux/abireport/blob/master/src/libabi/analyze.go
 func (s *SymbolStore) storeSymbol(name string, file *elf.File, sym *elf.Symbol) {
+	// Undefined = nope.
+	if sym.Section == elf.SHN_UNDEF {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "%s now provides %s %v\n", name, sym.Name, sym)
 	s.symbols[file.FileHeader.Machine][name][sym.Name] = true
 }
 
@@ -281,7 +280,7 @@ func (s *SymbolStore) scanELF(path string, file *elf.File) error {
 	for i := range syms {
 		sym := &syms[i]
 		if !s.resolveSymbol(path, file, sym) {
-			return fmt.Errorf("failed to resolve symbol: %s", sym.Name)
+			return fmt.Errorf("failed to resolve symbol: %s %s", sym.Name, path)
 		}
 	}
 
